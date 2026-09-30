@@ -13,6 +13,10 @@ minimum-weight logicals), and it gives upper and lower bounds on the distance
 of **any** bivariate bicycle (BB) code you hand it, proving the distance
 outright whenever the two bounds meet.
 
+References to the paper give the number used in the submitted manuscript
+together with its LaTeX label, for example Lemma 2 [lem:conn] or Table V
+[tab:census], so they can still be matched if the numbering moves.
+
 ---
 
 ## Contents
@@ -38,10 +42,10 @@ outright whenever the two bounds meet.
 
 | file | role | paper |
 |---|---|---|
-| `bbcode.py` | Python library and command-line tool: builds the code, computes the exact sequence, finds witnesses, runs the cluster search, reports bounds | Sec. II to VI |
-| `cluster_lb.c` | fast C implementation of the anchored cluster search, with enumeration, colon and kernel modes | Sec. V, Algorithm "anchored cluster search" |
-| `reproduce.py` | regenerates the tables of the paper and compares every value with the published one | Tables "profile", "witnesses", "cluster certificates", "census", Example [[108,8,10]] |
-| `selftest.py` | stabilizer sanity checks and a regression test against brute force | Appendix A |
+| `bbcode.py` | Python library and command-line tool: builds the code, computes the exact sequence, finds witnesses, runs support exclusion and the cluster search, reports bounds | Sec. II to VI |
+| `cluster_lb.c` | fast C implementation of the anchored cluster search, with enumeration, colon and kernel modes | Sec. V-A, Algorithm "anchored cluster search" [alg:cluster] |
+| `reproduce.py` | regenerates the numbers of the paper and compares every value with the printed one | Tables III, IV, V, VII, VIII, IX; Examples 4, 5, 6; Sec. V-C, V-D |
+| `selftest.py` | stabilizer sanity checks and the regression test against brute force | Sec. V-C |
 | `README.md` | this file | |
 
 ## 2. Requirements and installation
@@ -109,17 +113,20 @@ coefficients live in F2 (so `x+x` is `0`).
 
 1. Builds A, B, H_X = [A | B], H_Z = [B^T | A^T], K = ker H_X and S = im H_Z^T,
    and reports n and k.
-2. Computes the exact sequence of Theorem 1: dim ann(a), dim b ann(a), r_A,
-   dim (a:b), dim (a), r_C, and checks r_A + r_C = k (Corollary "basis") and
-   (a:b) = ann(b ann(a)) with r_A = r_C (Lemma "Frobenius balance").
-3. **Upper bound.** Runs the algebraic screens of Algorithm 1: least-weight
+2. Computes the exact sequence of Theorem 1 [thm:exact]: dim ann(a),
+   dim b ann(a), r_A, dim (a:b), dim (a), r_C, and checks r_A + r_C = k
+   (Corollary 1 [cor:basis]) and (a:b) = ann(b ann(a)) with r_A = r_C
+   (Lemma 1 [lem:frob]).
+3. **Upper bound.** Runs the screens of Algorithm "search for low-weight
+   logical witnesses" [alg:screen], in the order of Sec. IV-B: least-weight
    one-sided logicals (t,0) with t in ann(a) \ b ann(a), and (0,s) on the
    other block, plus sparse colon lifts a u = b v with the coset-leader weight
    minimised over u0 + ann(a). The lightest logical found is d_U.
-4. **Lower bound.** Runs the anchored cluster search at radius W = 1, 2, 3, ...
-   A radius with no hit certifies d >= W+1. The first radius with a hit gives
-   the distance exactly, since all smaller radii were already excluded. It
-   stops when the bounds meet or when the time budget is spent.
+4. **Lower bound.** Runs the anchored cluster search [alg:cluster] at radius
+   W = 1, 2, 3, ... A radius with no hit certifies d >= W+1 (Theorem 4
+   [thm:cluster]). The first radius with a hit gives the distance exactly,
+   since all smaller radii were already excluded (Sec. V-D). It stops when the
+   bounds meet or when the time budget is spent.
 
 ### Reading the output
 
@@ -127,19 +134,19 @@ coefficients live in F2 (so `x+x` is `0`).
 BB code on 12x6 torus: a = y+y^2+x^3, b = y^3+x+x^2
 n = 144, k = 12
 exact sequence (Theorem 1): dim ann(a)=12, dim b ann(a)=6, r_A=6; dim(a:b)=66, dim(a)=60, r_C=6
-checks: r_A + r_C = k -> True ; Frobenius (a:b)=ann(b ann(a)) and r_A=r_C -> True
+checks: r_A + r_C = k (Corollary 1) -> True ; (a:b) = ann(b ann(a)) and r_A = r_C (Lemma 1) -> True
   upper bound from screens: 12 (one-sided left)
   cluster search radius  1: none  nodes=2
   ...
   cluster search radius 11: none  nodes=284281
 
-distance proved: d = 12  (d_X = d_Z by Proposition 'X/Z symmetry')
+distance established: d = 12  (d_X = d_Z by Proposition 3)
 witness: u = ... ; v = 0 ; split (12,0) ; component A
 ```
 
-* `distance proved: d = ...` means an explicit logical meets a certified lower
+* `distance established: d = ...` means an explicit logical meets a certified lower
   bound.
-* `bounds only: d_L <= d <= d_U` means the budget ran out first. The lower
+* `bounds: d_L <= d <= d_U` means the budget ran out first. The lower
   bound is still a proof; the upper bound is the lightest logical found.
 * The witness line gives the two blocks as polynomials, the weight split and
   the component under pi[(u,v)] = v + (a): `A` (annihilator, pi = 0) or `C`
@@ -163,10 +170,10 @@ known), see [Limitations](#12-limitations).
 
 | option | meaning | paper |
 |---|---|---|
-| (none) | stop at the first logical of weight <= W, or certify d >= W+1 | Theorem "exactness of the cluster search" |
-| `-e` | enumerate: print every logical of weight <= W reached through an anchor | census, Table "census" |
-| `-c` | colon mode: a hit must have pi != 0; certifies d_C >= W+1 | Corollary "colon connectivity" |
-| `-k` | kernel mode: any nonzero element of K is a hit; gives w_K | Proposition "irreducible range" |
+| (none) | stop at the first logical of weight <= W, or certify d >= W+1 | Theorem 4 [thm:cluster] |
+| `-e` | enumerate: print every logical of weight <= W reached through an anchor | census, Table V [tab:census] |
+| `-c` | colon mode: a hit must have pi != 0; certifies d_C >= W+1 | Corollary 3 [cor:colonconn] |
+| `-k` | kernel mode: any nonzero element of K is a hit; gives w_K | Proposition 4 [prop:irred] |
 | `-n BUDGET` | stop after BUDGET nodes and certify nothing | |
 
 ### Output format
@@ -200,7 +207,7 @@ minimum-weight logicals, close the list under the l*m translations, as
 `reproduce.py` does.
 
 Enumeration is exact at radius W = d. For W > d it is exact as long as
-W < 2 w_K (Proposition "irreducible range"); beyond that, logicals whose
+W < 2 w_K (Proposition 4 [prop:irred]); beyond that, logicals whose
 support splits into two zero-syndrome pieces can be missed.
 
 ## 6. Reproducing the paper: `reproduce.py`
@@ -213,8 +220,9 @@ python3 reproduce.py [--skip-288] [--engine auto|c|py] [--milp] [--slow]
 |---|---|
 | `--skip-288` | leave out [[288,12,18]] |
 | `--engine` | as for `bbcode.py` |
-| `--milp` | add the parity-constrained MILP cross-check of eq. (milp) for n <= 108 (needs scipy; floating point, so a cross-check only) |
+| `--milp` | add the parity-constrained MILP cross-check of Sec. V-C, eq. (milpobj), for n <= 108 (needs scipy; floating point, so a cross-check only) |
 | `--slow` | with the Python engine, also run the [[288]] census (about 20 minutes or more) |
+| `--no-sweep` | skip Table VIII |
 
 For each of the six standard codes the script prints one line per quantity,
 with `ok` or `MISMATCH (manuscript: ...)`, and exits with status 0 only if
@@ -222,15 +230,19 @@ everything matches:
 
 | block | checks | paper |
 |---|---|---|
-| `[1]` | k, dim ann(a), dim b ann(a), r_A = r_C, the exact-sequence and Frobenius identities, exhaustive w_ann | Table "profile", Lemma "Frobenius balance" |
-| `[2]` | every listed witness is in K \ S with weight d; split and component; for [[18,4,4]], (1,b) lies in A | Table "witnesses", Appendix B, Example "component is not shape" |
-| `[3]` | cluster search at radius d-1 finds nothing; node count | Table "cluster certificates" |
-| `[4]` | number of minimum-weight classes and their component/shape counts; d_A, d_C where attained | Table "census", Table "profile" |
-| `[5]` | [[108,8,10]]: w_K = 6, no logical of weight 11, d_C = 10, d_A = 12 | Example [[108,8,10]], Proposition "irreducible range" |
-| `[6]` | MILP optimum (only with `--milp`) | Section "Results of the lower-bound computations" |
+| `[1]` | k, dim ann(a), dim b ann(a), r_A = r_C, eqs. (dimk) and (frobcolon), exhaustive w_ann | Table VII [tab:profile], Corollary 1, Lemma 1 |
+| `[2]` | every listed witness is in K \ S with weight d; split and component; (1,b) in A for [[18,4,4]]; (0,(1+x^2)b) in C for [[72,12,6]] | Table III [tab:wit], Table IX [tab:codedata], Examples 4 and 5 |
+| `[3]` | cluster search at radius d-1 finds nothing; node counts; support exclusion for [[18,4,4]] and [[72,12,6]] | Table IV [tab:clustercert], Theorem 3, Sec. V-D |
+| `[4]` | number of minimum-weight classes and their component/shape counts; d_A, d_C where attained | Table V [tab:census], Table VII |
+| `[5]` | [[108,8,10]]: w_K = 6, the 54 weight-10 logicals and nothing of weight 11, d_C = 10, d_A = 12 | Example 6 [ex:108], Proposition 4, Corollary 3 |
+| `[6]` | random-pair screening with the seeded sampler | Table VIII [tab:sweep], Sec. VI-B |
+| `[7]` | MILP optimum (only with `--milp`) | Sec. V-C, eq. (milpobj) |
 
-Not reproduced: the random-pair screening statistics of Table "sweep" (the
-exact sampler of the paper is not part of this package).
+The sampler of Table VIII draws each of a and b as three distinct monomials
+with Python's `random.Random(seed).sample`, seed 3 on the 6x6 torus and seed 5
+on the 9x6 torus, 200 pairs each. The one-sided screen is the exhaustive
+w_ann of eq. (wann); the lopsided screen looks for v in (a:b) \ (a) with
+wt(v) <= 2.
 
 ## 7. Self-test: `selftest.py`
 
@@ -238,12 +250,13 @@ exact sampler of the paper is not part of this package).
 python3 selftest.py [--count 200] [--seed 2026] [--max-n 32]
 ```
 
-1. For the six standard codes: every basis vector of S lies in K, every
+1. For the six standard codes of Table IX: every basis vector of S lies in K, every
    translated stabilizer generator (b x^i y^j, a x^i y^j) reduces to zero
    modulo the stored basis of S, and dim K - dim S = k.
 2. On `--count` random BB codes with n <= `--max-n` (random weight-2 and
    weight-3 polynomials on small tori), the cluster search distance equals the
-   brute-force minimum over K \ S, for each available engine.
+   brute-force minimum over K \ S, for each available engine. The defaults
+   (200 codes, n <= 32) are the regression test quoted in Sec. V-C.
 3. The C and Python engines visit exactly the same number of nodes on every
    test code, since they use the same canonical branching rule.
 
@@ -286,7 +299,9 @@ Useful pieces:
 | `code.translate(z, i, j)` | multiply both blocks by x^i y^j |
 | `code.mul(f, g)`, `code.fmt(f)` | product in R and pretty printing |
 | `cluster_search(code, W, mode, enumerate_all, node_budget, engine)` | `(status, hits, nodes)`; `mode` is `"logical"`, `"colon"` or `"kernel"` |
-| `one_sided_witnesses(code)`, `colon_lift_witnesses(code)` | lists of `(weight, z, description, exact_flag)` |
+| `one_sided_witnesses(code)`, `colon_lift_witnesses(code)` | lists of `(weight, z, description, exact_flag)`, the screens of [alg:screen] |
+| `support_exclusion(code, d0)` | Theorem 3 / [alg:supp]: `(True, None, tested)` certifies d >= d0 |
+| `sweep_sample(l, m, seed)`, `sweep_screens(code)` | the sampler and the two diagnostics of Table VIII |
 | `distance_bounds(code, seconds, engine, verbose)` | `(d_L, d_U, witness, notes)` |
 
 Vectors are Python integers used as bitsets. Bit `i*m + j` is the coefficient
@@ -297,25 +312,25 @@ of x^i y^j, and a two-block vector (u, v) is `u | (v << N)`.
 * **Indexing.** x^i y^j is coordinate i*m + j; the left block occupies
   0..N-1 and the right block N..2N-1, with N = l*m.
 * **Check matrices.** H_X = [A | B] and H_Z = [B^T | A^T], with A the matrix
-  of multiplication by a in the column-vector convention (Remark "stabilizer
-  convention"). Hence K = {(u,v) : a u + b v = 0} and S = {(b r, a r)}.
+  of multiplication by a in the column-vector convention (Remark 1
+  [rem:conv]). Hence K = {(u,v) : a u + b v = 0} and S = {(b r, a r)}.
   Some papers use the row convention, which replaces a, b by their reciprocals;
   distances and all dimensions are unchanged.
 * **Which distance.** Everything is computed for Z-type logicals. For BB codes
-  d_X = d_Z (Proposition "X/Z symmetry"), so d_Z is the code distance.
+  d_X = d_Z (Proposition 3 [prop:sym]), so d_Z is the code distance.
 * **Components.** A and C refer to the fixed projection pi[(u,v)] = v + (a).
-  Swapping the roles of a and b gives the companion labels of Corollary
-  "symmetric sequence".
+  Swapping the roles of a and b gives the companion labels of Corollary 2
+  [cor:sym].
 * **Shapes.** In the census, a class is one-sided if some minimum-weight
   representative has an empty block, tau-lopsided if not and some minimum
   representative has a block of weight <= tau, and tau-balanced otherwise,
-  with tau = max(wt a, wt b) (Definition "representative shape").
+  with tau = max(wt a, wt b) (Definition 1 [def:shape]).
 
 ## 10. How the bounds are certified
 
 * **Upper bounds** are explicit vectors z with H_X z = 0 and z not in S. Both
   properties are checked by exact elimination before a witness is reported.
-* **Lower bounds** rest on Lemma "syndrome connectivity": every proper subset
+* **Lower bounds** rest on Lemma 2 [lem:conn]: every proper subset
   of a minimum-weight logical has nonzero syndrome. The search therefore grows
   a support from an anchor qubit and always branches on the qubits of the
   lowest-index unsatisfied X-check, which never loses a minimum-weight logical.
@@ -334,8 +349,8 @@ variants are specific to this work.
 
 ## 11. Performance and runtimes
 
-Node counts are machine independent; times below are for one core and will
-vary.
+The node counts are those of Table IV [tab:clustercert] and do not depend on
+the machine or the engine; times below are for one core and will vary.
 
 | code | radius | nodes | C | Python |
 |---|---|---|---|---|
@@ -358,6 +373,10 @@ Other runtimes:
 * `selftest.py` with the default 200 codes takes a few seconds.
 * The exhaustive w_ann for [[288]] (2^24 elements) takes a few seconds in
   Python.
+* Support exclusion (Theorem 3) for [[72,12,6]] at |E| <= 5 tests about
+  1.1e6 anchored supports in roughly 5 s; it is not practical for the longer
+  codes (Sec. V-D).
+* Table VIII (400 random pairs) takes under a minute.
 
 ## 12. Limitations
 
@@ -374,8 +393,8 @@ Other runtimes:
 * **Enumeration beyond d.** Complete only up to radius 2 w_K - 1, see
   Section 5.
 * **d_A in general.** There is no annihilator analogue of the colon
-  connectivity result. d_A is read off the census when it equals d, and
-  otherwise obtained with Proposition "irreducible range" plus a one-sided
+  connectivity result (Corollary 3 [cor:colonconn]). d_A is read off the census when it equals d, and
+  otherwise obtained with Proposition 4 [prop:irred] plus a one-sided
   witness, as for [[108,8,10]].
 * **Size.** The C engine accepts any l, m and polynomials with up to 32 terms
   each. Memory is small; the Python engine keeps the recursion depth at W.
@@ -387,7 +406,7 @@ Other runtimes:
 | `cluster engine: pure Python` although you compiled | the binary must be named `cluster_lb` and sit next to `bbcode.py` or on the `PATH`, with execute permission |
 | `cannot parse polynomial` | use only `x`, `y`, `^`, `*`, digits and `+`; no spaces inside exponents, no minus signs |
 | `k = 0, no logical qubits` | this pair (a, b) encodes nothing on this torus; there is nothing to bound |
-| `RESULT budget` or `bounds only` | raise `--seconds` (or `-n` for `cluster_lb`), or use the C engine |
+| `RESULT budget` or `bounds:` instead of `distance established` | raise `--seconds` (or `-n` for `cluster_lb`), or use the C engine |
 | MILP check prints `scipy not available` | `pip install numpy scipy`, or run without `--milp` |
 | `AttributeError: 'int' object has no attribute 'bit_count'` | Python older than 3.10; upgrade |
 
