@@ -1,48 +1,50 @@
 /*
  * cluster_lb.c
  *
- * Anchored cluster search for bivariate bicycle (BB) codes, the lower-bound
- * engine behind Table "cluster certificates" of the manuscript
- * "Logical Operator Decomposition for Distance Analysis of Bivariate Bicycle
- * Codes" (Rowshan, Devitt).
+ * Anchored cluster search for bivariate bicycle (BB) codes: the lower-bound
+ * engine of "Logical Operator Decomposition for Distance Analysis of Bivariate
+ * Bicycle Codes" (Rowshan, Devitt), Sec. V-A. Manuscript items are cited by
+ * number and LaTeX label, e.g. Lemma 2 [lem:conn].
  *
- * What it does, in one paragraph: we grow a support T one qubit at a time,
- * starting from an anchor qubit, and at every step we only branch on the
- * qubits of the lowest-index unsatisfied X-check. Lemma "syndrome
- * connectivity" (Sec. V) says every proper subset of a minimum-weight logical
- * has nonzero syndrome, so this never loses a minimum-weight logical.
- * Translations fix the anchor (left origin, plus right origin for supports
- * living only on the right block), see Theorem "exactness of the cluster search".
- * If the search at radius W ends without a hit, that is a proof that d_Z >= W+1,
- * and d_X = d_Z for every BB code (Proposition "X/Z symmetry").
+ * The search grows a support T one qubit at a time from an anchor qubit and at
+ * every step branches only on the qubits of the lowest-index unsatisfied
+ * X-check (Algorithm "anchored cluster search" [alg:cluster]). By Lemma 2
+ * [lem:conn] every proper subset of a minimum-weight logical has nonzero
+ * syndrome, so no minimum-weight logical is lost; two anchors suffice by
+ * translation symmetry (proof of Theorem 4 [thm:cluster]). A run at radius W
+ * that ends without a hit proves d_Z >= W+1, and d_X = d_Z for every BB code
+ * (Proposition 3 [prop:sym]). Node counts printed here are the ones in
+ * Table IV [tab:clustercert].
  *
- * The idea of growing clusters in the Tanner graph goes back to
- * Dumer, Kovalev and Pryadko, IEEE Trans. Inf. Theory 63(7), 2017.
- * Everything here is exact integer / bit arithmetic, no floating point.
+ * Cluster growth in the Tanner graph goes back to Dumer, Kovalev and Pryadko,
+ * IEEE Trans. Inf. Theory 63(7), 2017. All arithmetic is exact bit and integer
+ * arithmetic.
  *
  * Build:   gcc -O3 -march=native -o cluster_lb cluster_lb.c
  *
  * Usage:   ./cluster_lb [options] l m W "a(x,y)" "b(x,y)"
- *   polynomials are written like  "x^3+y+y^2"  or  "1+x^2+x^7"  or "x^2*y^3"
+ *   polynomials are written like  "x^3+y+y^2",  "1+x^2+x^7",  "x^2*y^3"
  *
  * Options:
- *   -e        enumerate: do not stop at the first hit, print every hit
- *             (used for the minimum-weight census, Table "census")
- *   -c        colon mode: a leaf only counts if pi(z) = v + (a) is nonzero,
- *             and zero-syndrome leaves with pi = 0 are pruned
- *             (Corollary "colon connectivity"); certifies d_C >= W+1
- *   -k        kernel mode: any nonzero element of K counts, stabilizers too.
- *             Gives w_K, the minimum nonzero weight of K, needed by
- *             Proposition "irreducible range"
- *   -n NODES  node budget; if exceeded we say so and certify nothing
+ *   -e        enumerate: print every hit instead of stopping at the first.
+ *             At W = d this lists all minimum-weight logicals through an anchor
+ *             (census, Table V [tab:census]); for W < 2 w_K it lists every
+ *             logical of weight <= W (Proposition 4 [prop:irred]).
+ *   -c        colon mode: a leaf counts only if pi(z) = v + (a) is nonzero,
+ *             zero-syndrome leaves with pi = 0 are pruned; certifies
+ *             d_C >= W+1 (Corollary 3 [cor:colonconn]).
+ *   -k        kernel mode: any nonzero element of K counts, stabilizers
+ *             included; gives w_K for Proposition 4 [prop:irred].
+ *   -n NODES  node budget; if it is exceeded nothing is certified.
  *
- * Output (one item per line, easy to parse from Python):
+ * Output (one item per line):
  *   # info lines
- *   LOGICAL <weight> <q_1> ... <q_w>     qubit q < N is left block, q >= N right
+ *   LOGICAL <weight> <q_1> ... <q_w>     q < N left block, q >= N right block
  *   RESULT found|none|enumerated|budget ...
  *
- * Qubit indexing matches the manuscript: monomial x^i y^j <-> index i*m + j,
- * left block first (0..N-1), right block second (N..2N-1).
+ * Indexing follows Sec. II-B: monomial x^i y^j <-> i*m + j, left block
+ * 0..N-1, right block N..2N-1. H_X = [A | B] in the column-vector
+ * convention of Remark 1 [rem:conv].
  */
 
 #include <stdio.h>
@@ -206,14 +208,14 @@ static void grow(void) {
     if (nunsat == 0) {
         /* T is in K. Decide whether it counts as a hit, otherwise prune.
          * Pruning is safe: a zero-syndrome proper subset of a minimum-weight
-         * target cannot exist (Lemma "syndrome connectivity", or the colon
-         * version, or minimality of w_K in kernel mode). */
+         * target cannot exist (Lemma 2 [lem:conn]; Corollary 3 [cor:colonconn]
+         * in colon mode; minimality of w_K in kernel mode). */
         if (mode_kernel) report_hit();
         else if (mode_colon) { if (T_pi_nonzero()) report_hit(); }
         else if (!T_in_S()) report_hit();
         return;
     }
-    /* parity prune: each extra qubit fixes at most QMAX unsatisfied checks */
+    /* parity prune |T| + ceil(u/c) > W, c = max(wt a, wt b) (Sec. V-A) */
     if (tsz + (nunsat + QMAX - 1) / QMAX > W_) return;
 
     /* canonical choice: the lowest-index unsatisfied check */
@@ -255,9 +257,8 @@ int main(int argc, char **argv) {
     qchk = calloc((size_t)n_ * QMAX, sizeof(int)); qdeg = calloc(n_, sizeof(int));
     cq = calloc((size_t)N_ * CMAX, sizeof(int)); cdeg = calloc(N_, sizeof(int));
 
-    /* H_X = [A | B] with column-vector convention (Remark "stabilizer
-     * convention"): left qubit j sits in checks j + supp(a), right qubit j
-     * in checks j + supp(b). */
+    /* H_X = [A | B], column-vector convention of Remark 1 [rem:conv]:
+     * left qubit j sits in checks j + supp(a), right qubit j in j + supp(b). */
     for (int j = 0; j < N_; j++) {
         int ji = j / M_, jj = j % M_;
         for (int k = 0; k < wa; k++) {
@@ -270,7 +271,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* S = {(b r, a r)}: generators r = x^i y^j (Sec. II-B) */
+    /* S = {(b r, a r)}, eq. (KSmat): generators r = x^i y^j */
     space_init(&Sspace, n_, N_);
     {
         int words = Sspace.words;
@@ -309,7 +310,7 @@ int main(int argc, char **argv) {
     T = calloc(n_ + 1, sizeof(int));
 
     clock_t t0 = clock();
-    /* two anchors are enough (proof of Theorem "exactness of the cluster search") */
+    /* two anchors are enough (proof of Theorem 4 [thm:cluster]) */
     int anchors[2] = {0, N_};
     for (int A = 0; A < 2 && !stop_all; A++) {
         rightonly = (A == 1);
