@@ -6,22 +6,27 @@ Companion code for
   M. Rowshan and S. Devitt, "Logical Operator Decomposition for Distance
   Analysis of Bivariate Bicycle Codes".
 
-Everything is exact linear algebra over F_2. Vectors are Python ints used as
-bitsets: bit (i*m + j) is the coefficient of x^i y^j, and a length-n vector
-(u, v) is stored as u | (v << N), left block in the low bits.
+References in the comments give the number used in the manuscript together
+with its LaTeX label in square brackets, e.g. "Lemma 2 [lem:conn]", so they
+can be matched even if the numbering moves in a later version.
 
-Quick use from the shell (any BB code):
+Everything is exact linear algebra over F_2. Vectors are Python ints used as
+bitsets: bit (i*m + j) is the coefficient of x^i y^j, and a two-block vector
+(u, v) is stored as u | (v << N), left block in the low bits (Sec. II-B).
+
+Shell use, for any BB code:
 
     python3 bbcode.py -l 12 -m 6 -a "x^3+y+y^2" -b "y^3+x+x^2"
     python3 bbcode.py -l 12 -m 12 -a "x^3+y^2+y^7" -b "y^3+x+x^2" --seconds 60
 
-It prints n, k, the exact-sequence profile (Sec. III) and a pair of distance
-bounds d_L <= d <= d_U. Upper bounds come from explicit logicals (annihilator
-and colon screens, Sec. IV and Algorithm 1). Lower bounds come from the
-anchored cluster search (Sec. V, Lemma "syndrome connectivity"), run with
-iterative deepening until the bounds meet or the time budget is spent. If the
-compiled C engine ./cluster_lb is present it is used for speed, otherwise the
-pure-Python search below does the same thing (fine up to n ~ 150 or so).
+It prints n, k, the exact-sequence profile of Theorem 1 [thm:exact] and a
+pair of bounds d_L <= d <= d_U. Upper bounds are explicit logicals found by the
+screens of Algorithm "search for low-weight logical witnesses" [alg:screen].
+Lower bounds come from the anchored cluster search [alg:cluster], justified by
+Lemma 2 [lem:conn] and Theorem 4 [thm:cluster], run at increasing radius until
+the bounds meet (Sec. V-D) or the time budget runs out. When the compiled C
+engine ./cluster_lb is present it is used; otherwise the pure-Python search
+below runs the same algorithm with the same node counts.
 """
 
 import argparse
@@ -39,9 +44,9 @@ popcount = int.bit_count          # Python >= 3.10
 
 # ---------------------------------------------------------------------------
 # GF(2) helpers.  An echelon basis is kept as a dict {pivot_bit: row}, fully
-# reduced, so reduce() gives a canonical coset representative. That matters
-# for the census: two logicals are in the same class iff they reduce to the
-# same vector modulo S.
+# reduced, so reduce() returns a canonical coset representative. The census
+# (Table V [tab:census]) relies on this: two logicals are in the same class
+# of K/S iff they reduce to the same vector modulo S.
 # ---------------------------------------------------------------------------
 
 class Span:
@@ -82,8 +87,9 @@ class Span:
 def nullspace(images, nbits_in):
     """Kernel of the linear map sending basis vector e_i to images[i].
 
-    Standard trick: stack [image | identity] and eliminate on the image part.
-    Rows whose image part vanishes carry kernel vectors in the identity part.
+    Stack [image | identity] and eliminate on the image part; rows whose
+    image part vanishes carry kernel vectors in the identity part. This is
+    the "Gaussian elimination" of Sec. II-C, e.g. ann(a) = ker A.
     """
     rows = [(img << nbits_in) | (1 << i) for i, img in enumerate(images)]
     sp = Span(rows)
@@ -114,7 +120,12 @@ def parse_poly(s, l, m):
 
 
 class BBCode:
-    """BB code of (a, b) on the l x m torus, H_X = [A | B], H_Z = [B^T | A^T]."""
+    """BB code of (a, b) on the l x m torus (Sec. II-B).
+
+    H_X = [A | B] and H_Z = [B^T | A^T], with A the matrix of multiplication
+    by a in the column-vector convention of Remark 1 [rem:conv]. Then
+    K = {(u,v): a u + b v = 0} and S = {(b r, a r)}.
+    """
 
     def __init__(self, l, m, a, b, name=None):
         self.l, self.m = l, m
@@ -148,14 +159,14 @@ class BBCode:
         return out
 
     def shift(self, f, di, dj):
-        """multiply f by the monomial x^di y^dj (a torus translation)"""
+        """multiply f by the monomial x^di y^dj, a torus translation"""
         r = 0
         for i, j in self.monomials(f):
             r |= 1 << self.idx(i + di, j + dj)
         return r
 
     def mul(self, f, g):
-        """cyclic convolution in both indices, i.e. the product in R"""
+        """product in R: cyclic convolution in both indices (Sec. II-A)"""
         if popcount(f) > popcount(g):
             f, g = g, f
         r = 0
@@ -164,7 +175,7 @@ class BBCode:
         return r
 
     def fmt(self, f):
-        """pretty print an element of R, e.g. x^3y^2 + y"""
+        """pretty print an element of R, e.g. x^3y^2+y"""
         if not f:
             return "0"
         parts = []
@@ -174,20 +185,20 @@ class BBCode:
             parts.append(s or "1")
         return "+".join(parts)
 
-    # -- the objects of Table "notation" / Sec. II-C ------------------------
+    # -- Table I [tab:notation] and Table II [tab:glance] -------------------
     def _build(self):
         N = self.N
         mono = [1 << q for q in range(N)]
         self.Acols = [self.mul(self.a, e) for e in mono]     # columns of A
-        self.Bcols = [self.mul(self.b, e) for e in mono]
+        self.Bcols = [self.mul(self.b, e) for e in mono]     # columns of B
         self.ideal_a = Span(self.Acols)                       # (a) = im A
-        self.ideal_b = Span(self.Bcols)
-        # S = im [B; A]: stabilizer (b r, a r), r running over monomials
+        self.ideal_b = Span(self.Bcols)                       # (b) = im B
+        # S = im [B; A], eq. (KSmat): generators (b x^r, a x^r)
         self.S = Span(self.Bcols[r] | (self.Acols[r] << N) for r in range(N))
-        # K = ker [A | B]
+        # K = ker [A | B] = ker H_X, eq. (KSmat)
         self.K = nullspace(self.Acols + self.Bcols, self.n)
         self.k = len(self.K) - len(self.S)
-        # X-check structure for the cluster search: qubit q -> checks it meets
+        # Tanner-graph data for the cluster search: qubit q -> X-checks it meets
         self.qmask = [0] * self.n
         for q in range(N):
             self.qmask[q] = self.Acols[q]
@@ -199,6 +210,7 @@ class BBCode:
                 g = (c & -c).bit_length() - 1
                 self.check_qubits[g].append(q)
                 c &= c - 1
+        # c = max{wt(a), wt(b)}: most X-checks meeting one qubit (Sec. V-A)
         self.qdeg = max(len(self.a_terms), len(self.b_terms))
 
     # -- membership tests ---------------------------------------------------
@@ -213,34 +225,35 @@ class BBCode:
         return self.mul(self.a, u) ^ self.mul(self.b, v) == 0
 
     def is_logical(self, z):
+        """z in K \\ S, i.e. a nontrivial Z-logical (eq. (dz))"""
         return z != 0 and self.in_K(z) and z not in self.S
 
     def pi(self, z):
-        """pi[(u,v)] = v + (a); nonzero means colon component (Theorem 1)"""
+        """pi[(u,v)] = v + (a) of Theorem 1 [thm:exact], as a reduced vector"""
         return self.ideal_a.reduce(self.split(z)[1])
 
     def component(self, z):
+        """'A' (annihilator, pi = 0) or 'C' (colon, pi != 0), Sec. IV-A"""
         return "A" if self.pi(z) == 0 else "C"
 
     def class_key(self, z):
-        """canonical representative of z + S"""
+        """canonical representative of z + S, used to group the census"""
         return self.S.reduce(z)
 
     def translate(self, z, di, dj):
+        """action of the translation group G, Proposition 1 [prop:equiv]"""
         u, v = self.split(z)
         return self.join(self.shift(u, di, dj), self.shift(v, di, dj))
 
-    # -- decomposition (Theorem 1, Corollary "basis", Lemma "Frobenius") ----
+    # -- Theorem 1 [thm:exact], Corollary 1 [cor:basis], Lemma 1 [lem:frob] --
     def decomposition(self):
         N = self.N
-        ann_a = nullspace(self.Acols, N)
-        b_ann_a = Span(self.mul(self.b, t) for t in ann_a)
-        # colon ideal (a : b) = B^{-1}(im A): kernel of v -> (b v mod (a))
+        ann_a = nullspace(self.Acols, N)                           # ker A
+        b_ann_a = Span(self.mul(self.b, t) for t in ann_a)        # B(ker A)
+        # colon ideal (a : b) = B^{-1}(im A), eq. (colon): kernel of v -> b v mod (a)
         colon = nullspace([self.ideal_a.reduce(c) for c in self.Bcols], N)
-        # Lemma "Frobenius balance": (a : b) = ann(b ann(a)). Check it directly
-        # by computing ann of the ideal generated by b ann(a).
-        # b ann(a) is already an ideal (ann(a) is one), so its vector-space basis
-        # generates it and ann(b ann(a)) = {r : r g = 0 for every basis vector g}
+        # Lemma 1 [lem:frob], eq. (frobcolon): (a : b) = ann(b ann(a)).
+        # b ann(a) is itself an ideal, so its vector-space basis generates it.
         ann_J = self._ann_of(b_ann_a.basis())
         colon_span = Span(colon)
         frob_ok = len(ann_J) == len(colon) and all(x in colon_span for x in ann_J)
@@ -250,15 +263,16 @@ class BBCode:
             "dim_ann_a": len(ann_a), "dim_b_ann_a": len(b_ann_a),
             "dim_colon": len(colon), "dim_ideal_a": len(self.ideal_a),
             "r_A": rA, "r_C": rC, "k": self.k,
-            "sequence_ok": rA + rC == self.k,          # Corollary "basis"
-            "frobenius_ok": frob_ok and rA == rC,      # Lemma "Frobenius balance"
+            "sequence_ok": rA + rC == self.k,          # eq. (dimk)
+            "frobenius_ok": frob_ok and rA == rC,      # eq. (balanced-dim)
             "ann_a": ann_a, "b_ann_a": b_ann_a, "colon": colon,
         }
 
     def _ann_of(self, gens):
-        """ann(J) for the ideal J spanned (as a vector space) by gens."""
+        """ann(J) for the ideal J spanned, as a vector space, by gens"""
         N = self.N
-        # r is in ann(J) iff r*g = 0 for every g; stack the maps r -> r*g
+        if not gens:
+            return [1 << q for q in range(N)]
         images = []
         for q in range(N):
             e = 1 << q
@@ -266,19 +280,21 @@ class BBCode:
             for s, g in enumerate(gens):
                 img |= self.mul(e, g) << (s * N)
             images.append(img)
-        return nullspace(images, N) if gens else [1 << q for q in range(N)]
+        return nullspace(images, N)
 
 
 # ---------------------------------------------------------------------------
-# Upper bounds: explicit logicals (Sec. IV, Algorithm 1)
+# Upper bounds: Algorithm "search for low-weight logical witnesses"
+# [alg:screen], following the search order of Sec. IV-B.
 # ---------------------------------------------------------------------------
 
 def gray_min(basis, forbidden, max_dim=22, samples=200000, rng=None):
-    """Least weight of an element of span(basis) outside the span `forbidden`.
+    """Least weight in span(basis) outside the subspace `forbidden`.
 
-    Exhaustive (Gray code) when the dimension is small enough, which is how
-    w_ann in Table "profile" is obtained; otherwise random combinations, which
-    only gives an upper bound and we say so.
+    With basis = ann(a) and forbidden = b ann(a) this is w_ann of
+    eq. (wann). Exhaustive by Gray code when the dimension allows (this is how
+    the w_ann column of Table VII [tab:profile] is obtained); otherwise random
+    combinations, which only give an upper bound, and the flag says so.
     """
     d = len(basis)
     best, arg = None, None
@@ -302,11 +318,13 @@ def gray_min(basis, forbidden, max_dim=22, samples=200000, rng=None):
 
 
 def one_sided_witnesses(code, max_dim=22):
-    """w_ann on both blocks: (t,0), t in ann(a) \\ b ann(a), and (0,s)."""
+    """Steps 1 and 2 of Sec. IV-B: (t,0) with t in ann(a) \\ b ann(a), and
+    (0,s) with s in ann(b) \\ a ann(b). The right-only ones are labelled by
+    evaluating pi, since they may be colon classes (Example 4 [ex:72])."""
     N = code.N
     out = []
     for left in (True, False):
-        f, g = (code.a, code.b) if left else (code.b, code.a)
+        g = code.b if left else code.a
         cols = code.Acols if left else code.Bcols
         ann = nullspace(cols, N)
         forb = Span(code.mul(g, t) for t in ann)
@@ -319,10 +337,10 @@ def one_sided_witnesses(code, max_dim=22):
 
 
 def coset_min(u0, ann, exhaustive_dim=10):
-    """Lightest element of u0 + span(ann).
+    """Lightest element of u0 + span(ann), i.e. lambda_a of eq. (lambda).
 
-    Exact (Gray code) for small ann; otherwise a greedy descent, which is only
-    an upper bound on lambda_a but that is all a witness needs.
+    Exact by Gray code for small ann; otherwise a greedy descent, which is an
+    upper bound on lambda_a and is all a witness needs.
     """
     if len(ann) <= exhaustive_dim:
         best = cur = u0
@@ -342,21 +360,20 @@ def coset_min(u0, ann, exhaustive_dim=10):
 
 
 def colon_lift_witnesses(code, vmax=3, max_ann_dim=10):
-    """Sparse two-block relations a u = b v (Algorithm 1, lines 5-7).
+    """Step 3 of Sec. IV-B: sparse two-block relations a u = b v.
 
-    v runs over sparse words with one monomial anchored at 1 (translation
-    equivariance, Proposition "translation equivariance"). For each v with
-    b v in (a) we solve a u = b v and minimise wt(u) over the coset u0 + ann(a),
-    which is the coset-leader weight lambda_a(b v) of eq. (lambda).
-    The same is done with the roles of a and b swapped.
+    v runs over sparse words with one monomial anchored at 1, which is enough
+    by translation equivariance (Proposition 1 [prop:equiv]). For each v with
+    b v in (a) we solve a u = b v and minimise wt(u) over u0 + ann(a), the
+    coset-leader weight of eq. (dcol). The same is repeated with a and b
+    exchanged, as in the last loop of [alg:screen].
     """
     N = code.N
     found = []
     for swap in (False, True):
-        f, g = (code.b, code.a) if swap else (code.a, code.b)
+        g = code.a if swap else code.b
         fcols = code.Bcols if swap else code.Acols
         ann = nullspace(fcols, N)
-        # to solve f u = w: eliminate [image | identity] once
         solver = Span((c << N) | (1 << i) for i, c in enumerate(fcols))
         maskN = (1 << N) - 1
         for wv in range(1, vmax + 1):
@@ -366,7 +383,7 @@ def colon_lift_witnesses(code, vmax=3, max_ann_dim=10):
                     v |= 1 << q
                 w = code.mul(g, v)
                 red = solver.reduce(w << N)
-                if red >> N:                  # g v not in (f): v is not in the colon ideal
+                if red >> N:                  # g v not in (f): v not in the colon ideal
                     continue
                 u0 = red & maskN              # f u0 = g v
                 best_u = coset_min(u0, ann, max_ann_dim)
@@ -378,7 +395,40 @@ def colon_lift_witnesses(code, vmax=3, max_ann_dim=10):
 
 
 # ---------------------------------------------------------------------------
-# Lower bounds: anchored cluster search (Sec. V, Algorithm "cluster")
+# Lower bound, baseline: Algorithm "orbit-reduced support exclusion"
+# [alg:supp] and Theorem 3 [thm:supp]. Used in Sec. V-D for [[18,4,4]] and
+# [[72,12,6]]; its cost grows like binom(n, d0-1), so it stops there.
+# ---------------------------------------------------------------------------
+
+def support_exclusion(code, d0):
+    """True if K(E) = S(E) for every anchored support |E| < d0, i.e. d_Z >= d0.
+
+    Anchoring (Sec. V, paragraph after Theorem 3): one representative per
+    translation orbit, supports through the left origin plus right-only
+    supports through the right origin. K(E) is the kernel of the restricted
+    check columns; K(E) = S(E) iff every basis vector of K(E) lies in S.
+    Returns (ok, offending_support_or_None, supports_tested).
+    """
+    N, n = code.N, code.n
+    tested = 0
+    for anchor, pool in ((0, range(1, n)), (N, range(N + 1, n))):
+        for size in range(1, d0):
+            for rest in combinations(pool, size - 1):
+                E = (anchor,) + rest
+                tested += 1
+                for kvec in nullspace([code.qmask[q] for q in E], len(E)):
+                    z = 0
+                    for i, q in enumerate(E):
+                        if kvec >> i & 1:
+                            z |= 1 << q
+                    if z not in code.S:
+                        return False, E, tested
+    return True, None, tested
+
+
+# ---------------------------------------------------------------------------
+# Lower bound, main method: Algorithm "anchored cluster search"
+# [alg:cluster], Sec. V-A.
 # ---------------------------------------------------------------------------
 
 class Budget(Exception):
@@ -386,12 +436,20 @@ class Budget(Exception):
 
 
 def cluster_search_py(code, W, mode="logical", enumerate_all=False, node_budget=None):
-    """Pure-Python version of Algorithm "anchored cluster search".
+    """Pure-Python version of [alg:cluster].
 
-    mode = "logical": leaves count if not in S        (certifies d   >= W+1)
-    mode = "colon"  : leaves count if pi != 0         (certifies d_C >= W+1)
-    mode = "kernel" : any nonzero element of K counts (gives w_K)
-    Returns (status, hits, nodes) with status in {"found","none","enumerated","budget"}.
+    mode = "logical": a leaf counts if not in S. No hit certifies d >= W+1
+                      (Theorem 4 [thm:cluster]).
+    mode = "colon"  : a leaf counts if pi != 0. No hit certifies d_C >= W+1
+                      (Corollary 3 [cor:colonconn]).
+    mode = "kernel" : any nonzero element of K counts; gives w_K for
+                      Proposition 4 [prop:irred].
+    enumerate_all   : do not stop at the first hit (census, Table V
+                      [tab:census]; complete at W = d, and for W < 2 w_K by
+                      Proposition 4 [prop:irred]).
+    Returns (status, hits, nodes), status in {"found","none","enumerated","budget"}.
+    Nodes are calls of GROW over both anchors, as counted in Table IV
+    [tab:clustercert].
     """
     N, n = code.N, code.n
     qmask, cq, c = code.qmask, code.check_qubits, code.qdeg
@@ -411,17 +469,19 @@ def cluster_search_py(code, W, mode="logical", enumerate_all=False, node_budget=
         if node_budget is not None and state["nodes"] > node_budget:
             raise Budget
         if syn == 0:
-            # zero syndrome: record or prune (Lemma "syndrome connectivity")
+            # zero syndrome: output or prune. Pruning is safe because a
+            # minimum-weight target has no zero-syndrome proper subset
+            # (Lemma 2 [lem:conn]; colon and kernel analogues as above).
             if leaf_counts(z):
                 hits.append(z)
                 if not enumerate_all:
                     return True
             return False
         u = popcount(syn)
-        if len(T) + (u + c - 1) // c > W:          # parity prune
+        if len(T) + (u + c - 1) // c > W:          # parity prune |T| + ceil(u/c) > W
             return False
-        g = (syn & -syn).bit_length() - 1          # lowest unsatisfied check
-        for q in cq[g]:
+        g = (syn & -syn).bit_length() - 1          # lowest-index unsatisfied check
+        for q in cq[g]:                            # at most wt(a)+wt(b)-1 branches
             if inT[q] or (rightonly and q < N):
                 continue
             inT[q] = True
@@ -435,6 +495,7 @@ def cluster_search_py(code, W, mode="logical", enumerate_all=False, node_budget=
 
     sys.setrecursionlimit(max(1000, 4 * W + 100))
     try:
+        # two anchors, as in the proof of Theorem 4 [thm:cluster]
         for anchor, rightonly in ((0, False), (N, True)):
             inT[anchor] = True
             T.append(anchor)
@@ -496,17 +557,54 @@ def cluster_search(code, W, mode="logical", enumerate_all=False, node_budget=Non
 
 
 # ---------------------------------------------------------------------------
-# Putting it together: bounds for any BB code (Sec. VI-D "search and design")
+# Screening on random pairs, Sec. VI-B and Table VIII [tab:sweep]
+# ---------------------------------------------------------------------------
+
+def sweep_sample(l, m, seed, samples=200):
+    """The sampler of Sec. VI-B: independent uniform weight-three a and b
+    (distinct monomials within each, overlaps between a and b allowed), drawn
+    with Python's random.Random(seed); seed 3 for (6,6), seed 5 for (9,6)."""
+    mons = [(i, j) for i in range(l) for j in range(m)]
+    rng = random.Random(seed)
+    return [(rng.sample(mons, 3), rng.sample(mons, 3)) for _ in range(samples)]
+
+
+def sweep_screens(code):
+    """The two diagnostics reported in Table VIII [tab:sweep].
+
+    w_one: exact w_ann of eq. (wann) on the a-side (one-sided annihilator screen).
+    lop  : a sparse colon shortcut v in (a:b) \\ (a) with wt(v) <= 2.
+    """
+    ann = nullspace(code.Acols, code.N)
+    w_one = gray_min(ann, Span(code.mul(code.b, t) for t in ann), max_dim=24)[0]
+    lop = False
+    for w in (1, 2):
+        for S in combinations(range(code.N), w):
+            v, bv = 0, 0
+            for q in S:
+                v |= 1 << q
+                bv ^= code.Bcols[q]
+            if code.ideal_a.reduce(bv) == 0 and code.ideal_a.reduce(v) != 0:
+                lop = True
+                break
+        if lop:
+            break
+    return w_one, lop
+
+
+# ---------------------------------------------------------------------------
+# Putting it together: the procedure of Sec. VI-C [sec:workflow]
 # ---------------------------------------------------------------------------
 
 def distance_bounds(code, seconds=60.0, engine="auto", verbose=True):
     """Return (d_L, d_U, witness, notes).
 
-    d_U: lightest explicit logical among the algebraic screens.
-    d_L: iterative deepening of the cluster search, W = 1, 2, ...; a run at
-         radius W with no hit certifies d >= W+1 (Theorem "exactness").
-         The first radius with a hit gives d exactly, since smaller radii were
-         already excluded. We stop when the bounds meet or time runs out.
+    d_U: lightest explicit logical among the screens of [alg:screen].
+    d_L: the cluster search at W = 1, 2, ...; a radius with no hit certifies
+         d >= W+1 (Theorem 4 [thm:cluster]). The first radius with a hit gives d
+         exactly, since all smaller radii were already excluded (Sec. V-D). We
+         stop when the bounds meet or the time budget is spent. d_X = d_Z by
+         Proposition 3 [prop:sym], so this is the code distance.
     """
     log = print if verbose else (lambda *a, **k: None)
     if code.k == 0:
@@ -524,8 +622,8 @@ def distance_bounds(code, seconds=60.0, engine="auto", verbose=True):
         if left <= 0:
             notes.append("time budget spent at radius %d" % W)
             break
-        # crude node budget from the remaining time; the C engine does ~1e8 nodes/s,
-        # Python more like 2e6/s. Only used to stop runaway radii.
+        # rough node budget from the remaining time: the C engine manages a few
+        # times 1e7 nodes/s, Python roughly 2e6/s. Only used to stop runaways.
         rate = 3e7 if (engine != "py" and find_c_engine()) else 1.5e6
         status, hits, nodes = cluster_search(code, W, node_budget=int(rate * left), engine=engine)
         log("  cluster search radius %2d: %-5s nodes=%d" % (W, status, nodes))
@@ -534,7 +632,7 @@ def distance_bounds(code, seconds=60.0, engine="auto", verbose=True):
             break
         if status == "found":
             z = min(hits, key=popcount)
-            dL = dU = popcount(z)          # = W, the smaller radii are excluded
+            dL = dU = popcount(z)
             wit, how = z, "cluster search"
             break
         dL = W + 1
@@ -567,14 +665,14 @@ def main():
     dec = code.decomposition()
     print("exact sequence (Theorem 1): dim ann(a)=%d, dim b ann(a)=%d, r_A=%d; dim(a:b)=%d, dim(a)=%d, r_C=%d"
           % (dec["dim_ann_a"], dec["dim_b_ann_a"], dec["r_A"], dec["dim_colon"], dec["dim_ideal_a"], dec["r_C"]))
-    print("checks: r_A + r_C = k -> %s ; Frobenius (a:b)=ann(b ann(a)) and r_A=r_C -> %s"
+    print("checks: r_A + r_C = k (Corollary 1) -> %s ; (a:b) = ann(b ann(a)) and r_A = r_C (Lemma 1) -> %s"
           % (dec["sequence_ok"], dec["frobenius_ok"]))
     dL, dU, wit, notes = distance_bounds(code, args.seconds, args.engine)
     print()
     if dL == dU:
-        print("distance proved: d = %d  (d_X = d_Z by Proposition 'X/Z symmetry')" % dL)
+        print("distance established: d = %d  (d_X = d_Z by Proposition 3)" % dL)
     else:
-        print("bounds only: %d <= d <= %d" % (dL, dU))
+        print("bounds: %d <= d <= %d" % (dL, dU))
     for nt in notes:
         print("  note:", nt)
     if wit is not None:
